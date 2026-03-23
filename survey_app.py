@@ -110,9 +110,25 @@ elif page == "results":
     responses = data["responses"].get(survey_id, [])
 
     st.title(f"📊 Results: {survey['title']}")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([1, 1, 2])
     col1.metric("Total Responses", len(responses))
     col2.metric("Questions", len(survey["questions"]))
+
+    if responses:
+        # Build CSV
+        question_labels = {q["id"]: q["text"] for q in survey["questions"]}
+        csv_rows = []
+        for r in responses:
+            csv_rows.append({question_labels.get(qid, qid): ans for qid, ans in r.items()})
+        csv_df = pd.DataFrame(csv_rows)
+        with col3:
+            st.download_button(
+                label="⬇️ Download responses (CSV)",
+                data=csv_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"{survey['title'].replace(' ', '_')}_responses.csv",
+                mime="text/csv",
+            )
+
     st.markdown("---")
 
     if not responses:
