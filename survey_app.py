@@ -10,6 +10,15 @@ matplotlib.use("Agg")
 from wordcloud import WordCloud
 from collections import Counter
 import pandas as pd
+from urllib.parse import urlparse
+
+
+def detect_base_url():
+    try:
+        parsed = urlparse(st.context.url)
+        return f"{parsed.scheme}://{parsed.netloc}"
+    except Exception:
+        return "http://localhost:8501"
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), "survey_data.json")
 
@@ -220,8 +229,8 @@ else:
 
         base_url = st.text_input(
             "App base URL (for QR code link)",
-            value="http://localhost:8501",
-            help="Set this to the public URL where your Streamlit app is hosted.",
+            value=detect_base_url(),
+            help="Auto-detected from current URL. Override if needed.",
         )
 
         st.markdown("")
@@ -262,7 +271,7 @@ else:
         else:
             base_url2 = st.text_input(
                 "App base URL",
-                value="http://localhost:8501",
+                value=detect_base_url(),
                 key="base_url2",
             )
             st.markdown("")
