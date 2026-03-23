@@ -54,7 +54,15 @@ def make_qr(url):
     return buf.getvalue()
 
 
+FAVICON_URL = "https://cdn-east2.baincapital.com/Team/Ammar%20Lone%20Headshot%20sq%20pref%20.jpg"
+
+
 def inject_css():
+    # Favicon
+    st.markdown(
+        f'<link rel="shortcut icon" href="{FAVICON_URL}">',
+        unsafe_allow_html=True,
+    )
     st.markdown(f"""
     <style>
       /* ── Global ── */
@@ -360,6 +368,99 @@ def metric_card(value, label):
     """
 
 
+def render_results(survey, responses):
+    """Render the results charts/wordclouds for a survey."""
+    m1, m2, m3 = st.columns([1, 1, 2])
+    m1.markdown(metric_card(len(responses), "Total Responses"), unsafe_allow_html=True)
+    m2.markdown(metric_card(len(survey["questions"]), "Questions"), unsafe_allow_html=True)
+
+    if responses:
+        question_labels = {q["id"]: q["text"] for q in survey["questions"]}
+        csv_rows = [{question_labels.get(qid, qid): ans for qid, ans in r.items()} for r in responses]
+        csv_df = pd.DataFrame(csv_rows)
+        with m3:
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            st.download_button(
+                label="⬇  Download Responses (CSV)",
+                data=csv_df.to_csv(index=False).encode("utf-8"),
+                file_name=f"{survey['title'].replace(' ', '_')}_responses.csv",
+                mime="text/csv",
+                use_container_width=False,
+            )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    if not responses:
+        st.info("No responses yet.")
+        return
+
+    import random
+    for q in survey["questions"]:
+        answers = [r.get(q["id"], "").strip() for r in responses if r.get(q["id"], "").strip()]
+        type_label = "Open Response" if q["type"] == "open_ended" else "Multiple Choice"
+
+        st.markdown(f"""
+        <div class="bc-question">
+          <div class="bc-question-type">{type_label}</div>
+          <div class="bc-question-text">{q["text"]}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if not answers:
+            st.caption("No answers yet.")
+            st.markdown("<br>", unsafe_allow_html=True)
+            continue
+
+        if q["type"] == "multiple_choice":
+            counts = Counter(answers)
+            df = pd.DataFrame(counts.most_common(), columns=["Option", "Count"])
+            fig, ax = plt.subplots(figsize=(8, max(2.5, len(df) * 0.6)))
+            fig.patch.set_facecolor("white")
+            ax.set_facecolor("white")
+            bars = ax.barh(df["Option"], df["Count"], color=BC_RED, height=0.5)
+            ax.bar_label(bars, padding=6, color=BC_DARK, fontsize=11, fontweight="600")
+            ax.set_xlabel("Responses", fontsize=10, color=BC_GRAY)
+            ax.tick_params(colors=BC_DARK, labelsize=11)
+            ax.spines[["top", "right", "bottom"]].set_visible(False)
+            ax.spines["left"].set_color(BC_BORDER)
+            ax.set_xlim(0, df["Count"].max() * 1.2)
+            plt.tight_layout()
+            st.pyplot(fig)
+            plt.close()
+        else:
+            text = " ".join(answers)
+            try:
+                rng = random.Random(42)
+                wc = WordCloud(
+                    width=1000, height=380,
+                    background_color="white",
+                    color_func=lambda *args, **kwargs: BC_RED if rng.random() > 0.5 else BC_DARK,
+                    max_words=80,
+                    collocations=False,
+                    prefer_horizontal=0.85,
+                ).generate(text)
+                fig, ax = plt.subplots(figsize=(11, 4))
+                fig.patch.set_facecolor("white")
+                ax.imshow(wc, interpolation="bilinear")
+                ax.axis("off")
+                plt.tight_layout(pad=0)
+                st.pyplot(fig)
+                plt.close()
+            except Exception:
+                pass
+
+            with st.expander(f"View all {len(answers)} written responses"):
+                for i, a in enumerate(answers, 1):
+                    st.markdown(
+                        f"<div style='padding:10px 0; border-bottom:1px solid {BC_BORDER}; "
+                        f"font-size:14px; color:{BC_DARK}'>"
+                        f"<span style='color:{BC_RED}; font-weight:600; margin-right:10px'>{i}.</span>{a}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+
 # ── routing ───────────────────────────────────────────────────────────────────
 inject_css()
 params   = st.query_params
@@ -379,13 +480,22 @@ if page == "survey":
     banner("AI Tools Survey")
 
     if st.session_state.get("submitted"):
-        st.markdown("""
-        <div class="bc-thankyou">
-          <div class="bc-thankyou-icon">✓</div>
-          <div class="bc-thankyou-title">Response Submitted</div>
-          <div class="bc-thankyou-sub">Thank you for sharing your feedback.</div>
+        st.markdown(f"""
+        <div style="background:{BC_DARK}; border-left:4px solid {BC_RED}; border-radius:2px;
+                    padding:20px 28px; margin-bottom:32px; display:flex; align-items:center; gap:16px;">
+          <div style="color:{BC_RED}; font-size:28px; font-weight:700;">✓</div>
+          <div>
+            <div style="color:white; font-size:16px; font-weight:600; margin-bottom:2px;">
+              Response Submitted
+            </div>
+            <div style="color:#aaa; font-size:13px;">
+              Thank you for sharing your feedback. Here's how the team has responded so far.
+            </div>
+          </div>
         </div>
         """, unsafe_allow_html=True)
+        fresh = load_data()
+        render_results(fresh["surveys"][survey_id], fresh["responses"].get(survey_id, []))
         st.stop()
 
     col_center = st.columns([1, 3, 1])[1]
@@ -445,97 +555,7 @@ elif page == "results":
     <div class="bc-page-title">{survey["title"]}</div>
     """, unsafe_allow_html=True)
 
-    # Metrics + download row
-    m1, m2, m3 = st.columns([1, 1, 2])
-    m1.markdown(metric_card(len(responses), "Total Responses"), unsafe_allow_html=True)
-    m2.markdown(metric_card(len(survey["questions"]), "Questions"), unsafe_allow_html=True)
-
-    if responses:
-        question_labels = {q["id"]: q["text"] for q in survey["questions"]}
-        csv_rows = [{question_labels.get(qid, qid): ans for qid, ans in r.items()} for r in responses]
-        csv_df = pd.DataFrame(csv_rows)
-        with m3:
-            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-            st.download_button(
-                label="⬇  Download Responses (CSV)",
-                data=csv_df.to_csv(index=False).encode("utf-8"),
-                file_name=f"{survey['title'].replace(' ', '_')}_responses.csv",
-                mime="text/csv",
-                use_container_width=False,
-            )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    if not responses:
-        st.info("No responses yet.")
-        st.stop()
-
-    for q in survey["questions"]:
-        answers = [r.get(q["id"], "").strip() for r in responses if r.get(q["id"], "").strip()]
-        type_label = "Open Response" if q["type"] == "open_ended" else "Multiple Choice"
-
-        st.markdown(f"""
-        <div class="bc-question">
-          <div class="bc-question-type">{type_label}</div>
-          <div class="bc-question-text">{q["text"]}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if not answers:
-            st.caption("No answers yet.")
-            st.markdown("<br>", unsafe_allow_html=True)
-            continue
-
-        if q["type"] == "multiple_choice":
-            counts = Counter(answers)
-            df = pd.DataFrame(counts.most_common(), columns=["Option", "Count"])
-
-            fig, ax = plt.subplots(figsize=(8, max(2.5, len(df) * 0.6)))
-            fig.patch.set_facecolor("white")
-            ax.set_facecolor("white")
-            bars = ax.barh(df["Option"], df["Count"], color=BC_RED, height=0.5)
-            ax.bar_label(bars, padding=6, color=BC_DARK, fontsize=11, fontweight="600")
-            ax.set_xlabel("Responses", fontsize=10, color=BC_GRAY)
-            ax.tick_params(colors=BC_DARK, labelsize=11)
-            ax.spines[["top", "right", "bottom"]].set_visible(False)
-            ax.spines["left"].set_color(BC_BORDER)
-            ax.set_xlim(0, df["Count"].max() * 1.2)
-            plt.tight_layout()
-            st.pyplot(fig)
-            plt.close()
-
-        else:
-            text = " ".join(answers)
-            try:
-                wc = WordCloud(
-                    width=1000, height=380,
-                    background_color="white",
-                    color_func=lambda *args, **kwargs: BC_RED
-                    if __import__("random").random() > 0.5 else BC_DARK,
-                    max_words=80,
-                    collocations=False,
-                    prefer_horizontal=0.85,
-                ).generate(text)
-                fig, ax = plt.subplots(figsize=(11, 4))
-                fig.patch.set_facecolor("white")
-                ax.imshow(wc, interpolation="bilinear")
-                ax.axis("off")
-                plt.tight_layout(pad=0)
-                st.pyplot(fig)
-                plt.close()
-            except Exception:
-                pass
-
-            with st.expander(f"View all {len(answers)} written responses"):
-                for i, a in enumerate(answers, 1):
-                    st.markdown(
-                        f"<div style='padding:10px 0; border-bottom:1px solid {BC_BORDER}; "
-                        f"font-size:14px; color:{BC_DARK}'>"
-                        f"<span style='color:{BC_RED}; font-weight:600; margin-right:10px'>{i}.</span>{a}</div>",
-                        unsafe_allow_html=True,
-                    )
-
-        st.markdown("<br>", unsafe_allow_html=True)
+    render_results(survey, responses)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ADMIN PAGE
